@@ -48,5 +48,16 @@ export const authSessions = mysqlTable("auth_sessions", {
 
 export type AuthSession = typeof authSessions.$inferSelect;
 
+export const securityEvents = mysqlTable("security_events", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  eventType: varchar("eventType", { length: 64 }).notNull(),
+  ipAddress: varchar("ipAddress", { length: 64 }),
+  userAgent: varchar("userAgent", { length: 512 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SecurityEvent = typeof securityEvents.$inferSelect;
+
 // 2FA fields are intentionally ready for a future TOTP provider integration.
 // Secrets and recovery-code material must be encrypted/hashed before production use.

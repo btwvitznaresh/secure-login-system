@@ -29,11 +29,13 @@
 - [x] Initialize or update the GitHub repository and verify the latest remote state
 - [x] Create and validate reusable secure-auth skill with skill-creator
 - [x] Add profile dashboard with active-session listing and revocation
-- [ ] Add Google and GitHub OAuth2 sign-in options with safe configuration guidance
+- [x] Add Google and GitHub OAuth2 sign-in options with safe configuration guidance
 - [x] Add live password-strength meter to registration and reset forms
 - [x] Add automated tests for session revocation and password-strength scoring
 - [x] Update documentation and run checks; checkpoint and GitHub push completed
-- [ ] Add non-sensitive security-event data support and dashboard presentation without fabricated account records
+- [x] Add non-sensitive security-event data support and dashboard presentation without fabricated account records
 - [x] Preserve current-session metadata when revoking other sessions
 - [x] Add explicit session-query and revoke-mutation error states
 - [x] Ensure client password-strength tests are included in the Vitest run
+- [x] Fix OAuth cookie lifetime units for state and seven-day session cookies
+- [x] Add OAuth route tests for state-cookie and session-cookie expiration behavior

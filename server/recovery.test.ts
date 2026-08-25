@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { generate } from "otplib";
 
-vi.mock("./db", () => ({ getLocalUserByEmail: vi.fn(), createLocalUser: vi.fn(), createAuthSession: vi.fn(), deleteAuthSession: vi.fn(), getUserBySessionToken: vi.fn(), hashSessionToken: vi.fn((token: string) => `hash:${token}`), updateTwoFactorEnrollment: vi.fn(), verifyAuthSessionTwoFactor: vi.fn(), setEmailVerificationToken: vi.fn(), consumeEmailVerificationToken: vi.fn(), setPasswordResetToken: vi.fn(), getUserByPasswordResetToken: vi.fn(), completePasswordReset: vi.fn() }));
+vi.mock("./db", () => ({ getLocalUserByEmail: vi.fn(), createLocalUser: vi.fn(), createAuthSession: vi.fn(), deleteAuthSession: vi.fn(), getUserBySessionToken: vi.fn(), hashSessionToken: vi.fn((token: string) => `hash:${token}`), updateTwoFactorEnrollment: vi.fn(), verifyAuthSessionTwoFactor: vi.fn(), addSecurityEvent: vi.fn(), getSecurityEvents: vi.fn(), setEmailVerificationToken: vi.fn(), consumeEmailVerificationToken: vi.fn(), setPasswordResetToken: vi.fn(), getUserByPasswordResetToken: vi.fn(), completePasswordReset: vi.fn() }));
 vi.mock("./email", () => ({ deliverAccountEmail: vi.fn() }));
 import { appRouter } from "./routers";
 import * as db from "./db";

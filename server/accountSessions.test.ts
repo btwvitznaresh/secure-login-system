@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("./db", () => ({ getUserBySessionToken: vi.fn(), getActiveSessions: vi.fn(), revokeAuthSession: vi.fn(), revokeOtherAuthSessions: vi.fn(), hashSessionToken: vi.fn((token: string) => token === "current" ? "hash:current" : "hash:other") }));
+vi.mock("./db", () => ({ getUserBySessionToken: vi.fn(), getActiveSessions: vi.fn(), addSecurityEvent: vi.fn(), getSecurityEvents: vi.fn(), revokeAuthSession: vi.fn(), revokeOtherAuthSessions: vi.fn(), hashSessionToken: vi.fn((token: string) => token === "current" ? "hash:current" : "hash:other") }));
 import { appRouter } from "./routers";
 import * as db from "./db";
 const dbMock = vi.mocked(db); const csrfToken = "a".repeat(64);

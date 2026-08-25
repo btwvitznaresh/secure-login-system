@@ -1,7 +1,7 @@
 import { and, eq, gt, ne } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
-import { authSessions, InsertUser, users } from "../drizzle/schema";
+import { authSessions, InsertUser, securityEvents, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -151,6 +151,15 @@ export async function revokeAuthSession(userId: number, sessionId: number) {
 export async function revokeOtherAuthSessions(userId: number, currentToken: string) {
   const db = await getDb(); if (!db) return;
   await db.delete(authSessions).where(and(eq(authSessions.userId, userId), ne(authSessions.tokenHash, hashSessionToken(currentToken)), gt(authSessions.expiresAt, new Date())));
+}
+
+export async function addSecurityEvent(userId: number, eventType: string, metadata?: { ipAddress?: string; userAgent?: string }) {
+  const db = await getDb(); if (!db) return;
+  await db.insert(securityEvents).values({ userId, eventType: eventType.slice(0, 64), ipAddress: metadata?.ipAddress, userAgent: metadata?.userAgent?.slice(0, 512) });
+}
+export async function getSecurityEvents(userId: number) {
+  const db = await getDb(); if (!db) return [];
+  return db.select({ id: securityEvents.id, eventType: securityEvents.eventType, ipAddress: securityEvents.ipAddress, userAgent: securityEvents.userAgent, createdAt: securityEvents.createdAt }).from(securityEvents).where(eq(securityEvents.userId, userId)).orderBy(securityEvents.createdAt);
 }
 
 export async function verifyAuthSessionTwoFactor(token: string) {

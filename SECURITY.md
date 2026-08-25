@@ -47,3 +47,11 @@ The authenticated profile view lists only unexpired sessions and displays minima
 ## Password-strength feedback
 
 Registration and password-reset forms provide real-time guidance based on length, mixed case, digits, symbols, and repeated-character patterns. This is advisory UX only; the server remains authoritative and requires the configured password policy.
+
+## Google and GitHub OAuth2
+
+Google and GitHub sign-in start at `/api/oauth/google/start` and `/api/oauth/github/start`. Configure each provider's client ID and secret plus an HTTPS `APP_BASE_URL`; register exact callback URLs at `/api/oauth/{provider}/callback`. Provider secrets remain server-side. Each flow creates a random state value, stores it in an HTTP-only cookie, validates it on callback, exchanges the authorization code server-side, requires a verified email, and then creates the same local HTTP-only session used by password login.
+
+## Security activity data
+
+The `security_events` table stores minimal audit metadata for successful sign-ins, 2FA completion, recovery-code use, password resets, and logout. It intentionally excludes credentials, access tokens, raw session tokens, and recovery-code material. The profile dashboard shows the latest events for the signed-in account only.
