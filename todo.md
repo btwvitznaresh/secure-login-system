@@ -15,3 +15,15 @@
 - [x] Implement persisted TOTP-ready enrollment and verification with recovery-code storage
 - [x] Add and apply the missing recovery-code schema migration
 - [x] Add tests for non-enumerating registration and persisted 2FA-ready behavior
+- [x] Add server-side login rate limiting with safe keying and reset behavior
+- [x] Add CSRF token issuance and constant-time validation for state-changing local-auth procedures
+- [x] Integrate a maintained TOTP library and enforce 2FA during login when enabled
+- [x] Add one-time recovery-code redemption and invalidation
+- [x] Add email-verification token persistence and a provider-agnostic delivery adapter
+- [x] Add password-reset request, email-token verification, and password update workflow
+- [x] Add automated tests for rate limiting, CSRF, TOTP login, recovery codes, and password reset
+- [x] Update security documentation and run type checks, tests, visual verification, and GitHub push
+- [ ] Add a dedicated recovery-code input state to the 2FA challenge UI
+- [ ] Add a client-side email-verification token flow with success and error states
+- [ ] Add tests for TOTP login verification, recovery-code redemption, password reset, and email verification
+- [ ] Initialize or update the GitHub repository and verify the latest remote state

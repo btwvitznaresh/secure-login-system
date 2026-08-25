@@ -1,68 +1,56 @@
 import bcrypt from "bcryptjs";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { parse } from "cookie";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { getLocalUserByEmail, createLocalUser, createAuthSession, deleteAuthSession, getUserBySessionToken, hashSessionToken, updateTwoFactorEnrollment } from "./db";
+import { generateSecret, generateURI, verify } from "otplib";
+import { getLocalUserByEmail, createLocalUser, createAuthSession, deleteAuthSession, getUserBySessionToken, hashSessionToken, updateTwoFactorEnrollment, verifyAuthSessionTwoFactor, setEmailVerificationToken, consumeEmailVerificationToken, setPasswordResetToken, getUserByPasswordResetToken, completePasswordReset } from "./db";
+import { deliverAccountEmail } from "./email";
+import { checkLoginRateLimit, clientKey, issueCsrfToken, recordLoginAttempt, safeEqual } from "./security";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 
 export const LOCAL_SESSION_COOKIE = "local_session";
+export const CSRF_COOKIE = "local_csrf";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const TOKEN_TTL_MS = 1000 * 60 * 30;
 const emailSchema = z.string().trim().toLowerCase().email("Enter a valid email address").max(320);
 const passwordSchema = z.string().min(12, "Use at least 12 characters").max(128);
-const nameSchema = z.string().trim().min(1).max(80).optional();
+const csrfSchema = z.string().length(64);
+const withCsrf = <T extends z.ZodRawShape>(shape: T) => z.object({ ...shape, csrfToken: csrfSchema });
 
-function cookieOptions(req: any) {
-  return { httpOnly: true, secure: req.protocol === "https", sameSite: "lax" as const, path: "/", maxAge: SESSION_TTL_MS / 1000 };
-}
-function readLocalToken(req: any) { return parse(req.headers.cookie || "")[LOCAL_SESSION_COOKIE]; }
-function safeUser(user: any) { return user && { id: user.id, email: user.email, name: user.name, role: user.role, twoFactorEnabled: Boolean(user.twoFactorEnabled) }; }
-async function establishSession(ctx: any, userId: number) {
-  const raw = randomBytes(32).toString("hex");
-  await createAuthSession(userId, hashSessionToken(raw), new Date(Date.now() + SESSION_TTL_MS));
-  ctx.res.cookie(LOCAL_SESSION_COOKIE, raw, cookieOptions(ctx.req));
-}
-async function currentLocalUser(ctx: any) { const token = readLocalToken(ctx.req); return token ? getUserBySessionToken(token) : undefined; }
-function base32(bytes: Buffer) { const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"; let bits = 0, value = 0, output = ""; for (let index = 0; index < bytes.length; index++) { const byte = bytes[index] ?? 0; value = (value << 8) | byte; bits += 8; while (bits >= 5) { output += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; } } if (bits) output += alphabet[(value << (5 - bits)) & 31]; return output; }
-function base32Decode(value: string) { const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"; let bits = 0, buffer = 0; const out: number[] = []; for (const char of value.replace(/=+$/, "").toUpperCase()) { const index = alphabet.indexOf(char); if (index < 0) throw new Error("Invalid TOTP secret"); buffer = (buffer << 5) | index; bits += 5; if (bits >= 8) { out.push((buffer >>> (bits - 8)) & 255); bits -= 8; } } return Buffer.from(out); }
-export function totp(secret: string, counter: number) { const data = Buffer.alloc(8); data.writeBigUInt64BE(BigInt(counter)); const digest = createHmac("sha1", base32Decode(secret)).update(data).digest(); const offset = digest[digest.length - 1] & 15; const code = (digest.readUInt32BE(offset) & 0x7fffffff) % 1000000; return String(code).padStart(6, "0"); }
-function validTotp(secret: string, code: string) { const now = Math.floor(Date.now() / 1000 / 30); return [-1, 0, 1].some(delta => { const expected = Buffer.from(totp(secret, now + delta)); const supplied = Buffer.from(code); return expected.length === supplied.length && timingSafeEqual(expected, supplied); }); }
+function cookieOptions(req: any) { return { httpOnly: true, secure: req.protocol === "https", sameSite: "lax" as const, path: "/", maxAge: SESSION_TTL_MS / 1000 }; }
+function readCookie(req: any, name: string) { return parse(req.headers.cookie || "")[name]; }
+function safeUser(user: any) { return user && { id: user.id, email: user.email, name: user.name, role: user.role, emailVerified: Boolean(user.emailVerified), twoFactorEnabled: Boolean(user.twoFactorEnabled), sessionTwoFactorVerified: Boolean(user.sessionTwoFactorVerified) }; }
+function requireCsrf(ctx: any, token: string) { if (!safeEqual(readCookie(ctx.req, CSRF_COOKIE), token)) throw new TRPCError({ code: "FORBIDDEN", message: "Your security token is invalid or expired. Refresh and try again." }); }
+async function establishSession(ctx: any, userId: number, twoFactorVerified = 1) { const raw = randomBytes(32).toString("hex"); await createAuthSession(userId, hashSessionToken(raw), new Date(Date.now() + SESSION_TTL_MS), twoFactorVerified); ctx.res.cookie(LOCAL_SESSION_COOKIE, raw, cookieOptions(ctx.req)); }
+async function currentLocalUser(ctx: any) { const token = readCookie(ctx.req, LOCAL_SESSION_COOKIE); return token ? getUserBySessionToken(token) : undefined; }
+function genericRegistrationMessage() { return "If this address is eligible, we’ll continue with account setup."; }
 
 export const appRouter = router({
   system: systemRouter,
-  auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => { const cookieOptions = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 }); return { success: true } as const; }),
-  }),
+  auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: publicProcedure.mutation(({ ctx }) => { const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
   localAuth: router({
-    me: publicProcedure.query(async ({ ctx }) => safeUser(await currentLocalUser(ctx))),
-    register: publicProcedure.input(z.object({ email: emailSchema, password: passwordSchema, name: nameSchema })).mutation(async ({ input, ctx }) => {
-      if (await getLocalUserByEmail(input.email)) return { accepted: true, message: "If this address is eligible, we’ll continue with account setup." };
-      const passwordHash = await bcrypt.hash(input.password, 12);
-      try {
-        await createLocalUser(input.email, passwordHash, input.name);
-        return { accepted: true, message: "If this address is eligible, we’ll continue with account setup." };
-      } catch { return { accepted: true, message: "If this address is eligible, we’ll continue with account setup." }; }
-    }),
-    login: publicProcedure.input(z.object({ email: emailSchema, password: z.string().min(1).max(128) })).mutation(async ({ input, ctx }) => {
-      const user = await getLocalUserByEmail(input.email);
-      const valid = user?.passwordHash ? await bcrypt.compare(input.password, user.passwordHash) : false;
-      if (!user || !valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email or password is incorrect." });
-      await establishSession(ctx, user.id);
-      return { user: safeUser(user), requiresTwoFactor: Boolean(user.twoFactorEnabled) };
-    }),
-    logout: publicProcedure.mutation(async ({ ctx }) => { const token = readLocalToken(ctx.req); if (token) await deleteAuthSession(token); ctx.res.cookie(LOCAL_SESSION_COOKIE, "", { ...cookieOptions(ctx.req), maxAge: 0 }); return { success: true } as const; }),
+    csrfToken: publicProcedure.query(({ ctx }) => { const token = readCookie(ctx.req, CSRF_COOKIE) || issueCsrfToken(); ctx.res.cookie(CSRF_COOKIE, token, { ...cookieOptions(ctx.req), maxAge: 60 * 60 * 2 }); return { token }; }),
+    me: publicProcedure.query(async ({ ctx }) => { const user = await currentLocalUser(ctx); return user && (!user.twoFactorEnabled || user.sessionTwoFactorVerified) ? safeUser(user) : undefined; }),
+    register: publicProcedure.input(withCsrf({ email: emailSchema, password: passwordSchema, name: z.string().trim().min(1).max(80).optional() })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const existing = await getLocalUserByEmail(input.email); if (existing) return { accepted: true, message: genericRegistrationMessage() }; const passwordHash = await bcrypt.hash(input.password, 12); try { const id = await createLocalUser(input.email, passwordHash, input.name); const token = randomBytes(32).toString("hex"); await setEmailVerificationToken(id, hashSessionToken(token), new Date(Date.now() + TOKEN_TTL_MS)); await deliverAccountEmail({ to: input.email, kind: "verify-email", token, expiresAt: new Date(Date.now() + TOKEN_TTL_MS) }); } catch { /* Keep registration response non-enumerating. */ } return { accepted: true, message: genericRegistrationMessage() }; }),
+    login: publicProcedure.input(withCsrf({ email: emailSchema, password: z.string().min(1).max(128) })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const key = clientKey(ctx.req, input.email); const limit = checkLoginRateLimit(key); if (!limit.allowed) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Too many attempts. Try again in ${limit.retryAfterSeconds} seconds.` }); const user = await getLocalUserByEmail(input.email); const valid = user?.passwordHash ? await bcrypt.compare(input.password, user.passwordHash) : false; recordLoginAttempt(key, Boolean(valid)); if (!user || !valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email or password is incorrect." }); await establishSession(ctx, user.id, user.twoFactorEnabled ? 0 : 1); return { user: safeUser({ ...user, sessionTwoFactorVerified: user.twoFactorEnabled ? 0 : 1 }), requiresTwoFactor: Boolean(user.twoFactorEnabled) }; }),
+    logout: publicProcedure.input(withCsrf({})).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const token = readCookie(ctx.req, LOCAL_SESSION_COOKIE); if (token) await deleteAuthSession(token); ctx.res.cookie(LOCAL_SESSION_COOKIE, "", { ...cookieOptions(ctx.req), maxAge: 0 }); return { success: true } as const; }),
   }),
-  account: router({
-    overview: publicProcedure.query(async ({ ctx }) => { const user = await currentLocalUser(ctx); if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in." }); return { user: safeUser(user), security: { twoFactorReady: true, recoveryGuidance: "Store recovery codes offline and never share them." } }; }),
-  }),
+  account: router({ overview: publicProcedure.query(async ({ ctx }) => { const user = await currentLocalUser(ctx); if (!user || (user.twoFactorEnabled && !user.sessionTwoFactorVerified)) throw new TRPCError({ code: "UNAUTHORIZED", message: "Complete two-factor verification." }); return { user: safeUser(user), security: { twoFactorReady: true, recoveryGuidance: "Store recovery codes offline and never share them." } }; }) }),
   twoFactor: router({
-    status: publicProcedure.query(async ({ ctx }) => { const user = await currentLocalUser(ctx); return { authenticated: Boolean(user), enabled: user ? Boolean(user.twoFactorEnabled) : false, ready: true, guidance: "TOTP enrollment and recovery-code verification can be connected here without changing the session model." }; }),
-    beginEnrollment: publicProcedure.mutation(async ({ ctx }) => { const user = await currentLocalUser(ctx); if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in." }); const secret = base32(randomBytes(20)); const enrollmentId = randomBytes(16).toString("hex"); await updateTwoFactorEnrollment(user.id, { twoFactorSecret: secret, twoFactorEnrollmentId: enrollmentId, twoFactorEnabled: 0 }); return { ready: true, enrollmentId, secret, otpauthUri: `otpauth://totp/Haven:${encodeURIComponent(user.email || "account")}?secret=${secret}&issuer=Haven`, guidance: "Add this secret to a TOTP authenticator, then submit the six-digit code. Save recovery codes offline." }; }),
-    verifyEnrollment: publicProcedure.input(z.object({ enrollmentId: z.string().length(32), code: z.string().regex(/^\d{6}$/, "Enter a six-digit verification code") })).mutation(async ({ ctx, input }) => { const user = await currentLocalUser(ctx); if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in." }); if (user.twoFactorEnrollmentId !== input.enrollmentId || !user.twoFactorSecret || !validTotp(user.twoFactorSecret, input.code)) throw new TRPCError({ code: "BAD_REQUEST", message: "That verification code is invalid or expired." }); const recoveryCodes = Array.from({ length: 8 }, () => randomBytes(5).toString("hex")); await updateTwoFactorEnrollment(user.id, { twoFactorEnabled: 1, twoFactorEnrollmentId: null, recoveryCodesHash: await bcrypt.hash(recoveryCodes.join(","), 12) }); return { ready: true, accepted: true, recoveryCodes, guidance: "Download or print these recovery codes now. They will not be shown again." }; }),
+    status: publicProcedure.query(async ({ ctx }) => { const user = await currentLocalUser(ctx); return { authenticated: Boolean(user), enabled: user ? Boolean(user.twoFactorEnabled) : false, ready: true, guidance: "Use an authenticator app and store recovery codes offline." }; }),
+    beginEnrollment: publicProcedure.input(withCsrf({})).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const user = await currentLocalUser(ctx); if (!user) throw new TRPCError({ code: "UNAUTHORIZED", message: "Please sign in." }); const secret = generateSecret(); const enrollmentId = randomBytes(16).toString("hex"); await updateTwoFactorEnrollment(user.id, { twoFactorSecret: secret, twoFactorEnrollmentId: enrollmentId, twoFactorEnabled: 0 }); return { ready: true, enrollmentId, secret, otpauthUri: generateURI({ issuer: "Haven", label: user.email || "account", secret }), guidance: "Add this secret to your authenticator, then submit the six-digit code. Save recovery codes offline." }; }),
+    verifyEnrollment: publicProcedure.input(withCsrf({ enrollmentId: z.string().length(32), code: z.string().regex(/^\d{6}$/) })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const user = await currentLocalUser(ctx); if (!user || user.twoFactorEnrollmentId !== input.enrollmentId || !user.twoFactorSecret || !(await verify({ secret: user.twoFactorSecret, token: input.code })).valid) throw new TRPCError({ code: "BAD_REQUEST", message: "That verification code is invalid or expired." }); const recoveryCodes = Array.from({ length: 8 }, () => randomBytes(5).toString("hex")); const hashedCodes = await Promise.all(recoveryCodes.map(code => bcrypt.hash(code, 12))); await updateTwoFactorEnrollment(user.id, { twoFactorEnabled: 1, twoFactorEnrollmentId: null, recoveryCodesHash: JSON.stringify(hashedCodes) }); return { ready: true, accepted: true, recoveryCodes, guidance: "Download or print these recovery codes now. They will not be shown again." }; }),
+    verifyLogin: publicProcedure.input(withCsrf({ code: z.string().regex(/^\d{6}$/) })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const token = readCookie(ctx.req, LOCAL_SESSION_COOKIE); const user = await currentLocalUser(ctx); if (!token || !user?.twoFactorEnabled || user.sessionTwoFactorVerified || !user.twoFactorSecret || !(await verify({ secret: user.twoFactorSecret, token: input.code })).valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "The authenticator code is invalid." }); await verifyAuthSessionTwoFactor(token); return { success: true, user: safeUser({ ...user, sessionTwoFactorVerified: 1 }) }; }),
+    redeemRecoveryCode: publicProcedure.input(withCsrf({ code: z.string().trim().min(8).max(32) })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const token = readCookie(ctx.req, LOCAL_SESSION_COOKIE); const user = await currentLocalUser(ctx); if (!token || !user?.twoFactorEnabled || user.sessionTwoFactorVerified) throw new TRPCError({ code: "UNAUTHORIZED", message: "Complete the authenticator step first." }); const hashes: string[] = user.recoveryCodesHash ? JSON.parse(user.recoveryCodesHash) : []; const index = await (async () => { for (let i = 0; i < hashes.length; i++) if (await bcrypt.compare(input.code, hashes[i] || "")) return i; return -1; })(); if (index < 0) throw new TRPCError({ code: "UNAUTHORIZED", message: "That recovery code is invalid or already used." }); hashes.splice(index, 1); await updateTwoFactorEnrollment(user.id, { recoveryCodesHash: JSON.stringify(hashes) }); await verifyAuthSessionTwoFactor(token); return { success: true, remainingCodes: hashes.length }; }),
+  }),
+  recovery: router({
+    verifyEmail: publicProcedure.input(z.object({ token: z.string().min(32).max(128) })).mutation(async ({ input }) => { const user = await consumeEmailVerificationToken(hashSessionToken(input.token)); if (!user) throw new TRPCError({ code: "BAD_REQUEST", message: "That verification link is invalid or expired." }); return { success: true }; }),
+    requestPasswordReset: publicProcedure.input(withCsrf({ email: emailSchema })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const user = await getLocalUserByEmail(input.email); if (user) { const token = randomBytes(32).toString("hex"); const expiresAt = new Date(Date.now() + TOKEN_TTL_MS); await setPasswordResetToken(user.id, hashSessionToken(token), expiresAt); try { await deliverAccountEmail({ to: input.email, kind: "reset-password", token, expiresAt }); } catch { /* Keep reset requests non-enumerating. */ } } return { accepted: true, message: "If an account matches, a reset link will be sent shortly." }; }),
+    resetPassword: publicProcedure.input(withCsrf({ token: z.string().min(32).max(128), password: passwordSchema })).mutation(async ({ input, ctx }) => { requireCsrf(ctx, input.csrfToken); const user = await getUserByPasswordResetToken(hashSessionToken(input.token)); if (!user) throw new TRPCError({ code: "BAD_REQUEST", message: "That reset link is invalid or expired." }); await completePasswordReset(user.id, await bcrypt.hash(input.password, 12)); return { success: true }; }),
   }),
 });
 export type AppRouter = typeof appRouter;

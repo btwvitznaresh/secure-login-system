@@ -1,0 +1,20 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import bcrypt from "bcryptjs";
+import { generate } from "otplib";
+
+vi.mock("./db", () => ({ getLocalUserByEmail: vi.fn(), createLocalUser: vi.fn(), createAuthSession: vi.fn(), deleteAuthSession: vi.fn(), getUserBySessionToken: vi.fn(), hashSessionToken: vi.fn((token: string) => `hash:${token}`), updateTwoFactorEnrollment: vi.fn(), verifyAuthSessionTwoFactor: vi.fn(), setEmailVerificationToken: vi.fn(), consumeEmailVerificationToken: vi.fn(), setPasswordResetToken: vi.fn(), getUserByPasswordResetToken: vi.fn(), completePasswordReset: vi.fn() }));
+vi.mock("./email", () => ({ deliverAccountEmail: vi.fn() }));
+import { appRouter } from "./routers";
+import * as db from "./db";
+const dbMock = vi.mocked(db); const csrfToken = "a".repeat(64);
+const baseUser = { id: 4, email: "user@example.com", name: "User", passwordHash: "hash", role: "user", emailVerified: 0, twoFactorEnabled: 0, twoFactorSecret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", twoFactorEnrollmentId: null, sessionTwoFactorVerified: 1 };
+function ctx(cookie = "") { const cookies: any[] = []; const value = { req: { protocol: "https", headers: { cookie: `${cookie}; local_csrf=${csrfToken}` } }, res: { cookie: (name: string, value: string, options: any) => cookies.push({ name, value, options }), setHeader: vi.fn(), clearCookie: vi.fn() } }; return { cookies, value } as any; }
+
+describe("account recovery and second factor", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it("uses a non-enumerating password-reset response and stores a short-lived token", async () => { dbMock.getLocalUserByEmail.mockResolvedValue(baseUser as any); const { value } = ctx(); const result = await appRouter.createCaller(value).recovery.requestPasswordReset({ email: baseUser.email, csrfToken }); expect(result.accepted).toBe(true); expect(dbMock.setPasswordResetToken).toHaveBeenCalledWith(4, expect.stringMatching(/^hash:[a-f0-9]{64}$/), expect.any(Date)); });
+  it("consumes email verification tokens once", async () => { dbMock.consumeEmailVerificationToken.mockResolvedValue(baseUser as any); const { value } = ctx(); const result = await appRouter.createCaller(value).recovery.verifyEmail({ token: "x".repeat(32) }); expect(result).toEqual({ success: true }); expect(dbMock.consumeEmailVerificationToken).toHaveBeenCalledWith("hash:" + "x".repeat(32)); });
+  it("updates the password only for a valid reset token", async () => { dbMock.getUserByPasswordResetToken.mockResolvedValue(baseUser as any); const { value } = ctx(); const result = await appRouter.createCaller(value).recovery.resetPassword({ token: "x".repeat(32), password: "new correct horse battery staple", csrfToken }); expect(result).toEqual({ success: true }); expect(dbMock.completePasswordReset).toHaveBeenCalledWith(4, expect.stringMatching(/^\$2[aby]\$/)); });
+  it("completes a TOTP login challenge with the integrated library", async () => { const secret = baseUser.twoFactorSecret; dbMock.getUserBySessionToken.mockResolvedValue({ ...baseUser, twoFactorEnabled: 1, sessionTwoFactorVerified: 0 } as any); const { value } = ctx("local_session=challenge-token"); const code = await generate({ secret }); const result = await appRouter.createCaller(value).twoFactor.verifyLogin({ code, csrfToken }); expect(result.success).toBe(true); expect(dbMock.verifyAuthSessionTwoFactor).toHaveBeenCalledWith("challenge-token"); });
+  it("redeems and invalidates one recovery code", async () => { const hash = await bcrypt.hash("recover-code", 4); dbMock.getUserBySessionToken.mockResolvedValue({ ...baseUser, twoFactorEnabled: 1, sessionTwoFactorVerified: 0, recoveryCodesHash: JSON.stringify([hash]) } as any); const { value } = ctx("local_session=challenge-token"); const result = await appRouter.createCaller(value).twoFactor.redeemRecoveryCode({ code: "recover-code", csrfToken }); expect(result).toEqual({ success: true, remainingCodes: 0 }); expect(dbMock.verifyAuthSessionTwoFactor).toHaveBeenCalledWith("challenge-token"); expect(dbMock.updateTwoFactorEnrollment).toHaveBeenCalledWith(4, { recoveryCodesHash: "[]" }); });
+});

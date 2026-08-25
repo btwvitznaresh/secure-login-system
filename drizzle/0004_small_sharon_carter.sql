@@ -1,0 +1,1 @@
+ALTER TABLE `auth_sessions` ADD `twoFactorVerified` int DEFAULT 1 NOT NULL;

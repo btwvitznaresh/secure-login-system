@@ -29,3 +29,13 @@ The database migration for `auth_sessions` and the user security fields is gener
 ## Production checklist
 
 Use HTTPS, keep `JWT_SECRET` and `DATABASE_URL` out of source control, set a strong production database credential, add CSRF protection appropriate to the deployment architecture, add login and registration rate limiting, consider generic duplicate-account messaging where account enumeration is a concern, and monitor failed login events. The current UI is a secure-flow prototype and should receive a security review before handling sensitive production accounts.
+
+## Additional account-protection controls
+
+Local login attempts are bounded to five failures per fifteen-minute window per normalized email and client-address key. Successful authentication clears that key. For horizontally scaled production deployments, move this limiter to a shared store such as Redis so limits apply consistently across instances.
+
+State-changing local-auth procedures require a server-issued double-submit CSRF token. The token is stored in an HTTP-only cookie and must also be submitted in the tRPC input; validation uses a constant-time comparison. Keep the application on HTTPS and preserve the secure cookie settings in production.
+
+TOTP enrollment uses the `otplib` implementation with a 160-bit secret, an `otpauth://` URI, a six-digit verification step, and a seven-day session challenge state. When enabled, account access remains blocked until the current session completes TOTP verification or redeems one unused recovery code. Recovery codes are individually bcrypt-hashed and the redeemed hash is removed from the stored JSON array.
+
+Registration and password-reset requests use non-enumerating responses. Registration creates a short-lived email-verification token, while reset requests create a short-lived password-reset token. The server sends these tokens through `AUTH_EMAIL_WEBHOOK_URL`, a provider-agnostic HTTPS webhook that your transactional email service should translate into user-facing links. The links should point back to the app with the token as a one-time parameter. In development, delivery is logged as prepared rather than sent.

@@ -15,6 +15,11 @@ export const users = mysqlTable("users", {
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
+  emailVerified: int("emailVerified").default(0).notNull(),
+  emailVerificationTokenHash: varchar("emailVerificationTokenHash", { length: 64 }),
+  emailVerificationExpiresAt: timestamp("emailVerificationExpiresAt"),
+  passwordResetTokenHash: varchar("passwordResetTokenHash", { length: 64 }),
+  passwordResetExpiresAt: timestamp("passwordResetExpiresAt"),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -35,6 +40,7 @@ export const authSessions = mysqlTable("auth_sessions", {
   userId: int("userId").notNull(),
   tokenHash: varchar("tokenHash", { length: 64 }).notNull().unique(),
   expiresAt: timestamp("expiresAt").notNull(),
+  twoFactorVerified: int("twoFactorVerified").default(1).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

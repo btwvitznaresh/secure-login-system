@@ -118,26 +118,57 @@ export function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function createAuthSession(userId: number, tokenHash: string, expiresAt: Date) {
+export async function createAuthSession(userId: number, tokenHash: string, expiresAt: Date, twoFactorVerified = 1) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.insert(authSessions).values({ userId, tokenHash, expiresAt });
+  await db.insert(authSessions).values({ userId, tokenHash, expiresAt, twoFactorVerified });
 }
 
 export async function getUserBySessionToken(token: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const rows = await db.select({ user: users }).from(authSessions)
+  const rows = await db.select({ user: users, session: authSessions }).from(authSessions)
     .innerJoin(users, eq(authSessions.userId, users.id))
     .where(and(eq(authSessions.tokenHash, hashSessionToken(token)), gt(authSessions.expiresAt, new Date())))
     .limit(1);
-  return rows[0]?.user;
+  return rows[0] ? { ...rows[0].user, sessionTwoFactorVerified: rows[0].session.twoFactorVerified } : undefined;
 }
 
 export async function deleteAuthSession(token: string) {
   const db = await getDb();
   if (!db) return;
   await db.delete(authSessions).where(eq(authSessions.tokenHash, hashSessionToken(token)));
+}
+
+export async function verifyAuthSessionTwoFactor(token: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(authSessions).set({ twoFactorVerified: 1 }).where(eq(authSessions.tokenHash, hashSessionToken(token)));
+}
+
+export async function setEmailVerificationToken(userId: number, tokenHash: string, expiresAt: Date) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  await db.update(users).set({ emailVerificationTokenHash: tokenHash, emailVerificationExpiresAt: expiresAt }).where(eq(users.id, userId));
+}
+export async function consumeEmailVerificationToken(tokenHash: string) {
+  const db = await getDb(); if (!db) return undefined;
+  const rows = await db.select().from(users).where(and(eq(users.emailVerificationTokenHash, tokenHash), gt(users.emailVerificationExpiresAt, new Date()))).limit(1);
+  const user = rows[0]; if (!user) return undefined;
+  await db.update(users).set({ emailVerified: 1, emailVerificationTokenHash: null, emailVerificationExpiresAt: null }).where(eq(users.id, user.id));
+  return user;
+}
+export async function setPasswordResetToken(userId: number, tokenHash: string, expiresAt: Date) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  await db.update(users).set({ passwordResetTokenHash: tokenHash, passwordResetExpiresAt: expiresAt }).where(eq(users.id, userId));
+}
+export async function getUserByPasswordResetToken(tokenHash: string) {
+  const db = await getDb(); if (!db) return undefined;
+  const rows = await db.select().from(users).where(and(eq(users.passwordResetTokenHash, tokenHash), gt(users.passwordResetExpiresAt, new Date()))).limit(1);
+  return rows[0];
+}
+export async function completePasswordReset(userId: number, passwordHash: string) {
+  const db = await getDb(); if (!db) throw new Error("Database is not available");
+  await db.update(users).set({ passwordHash, passwordResetTokenHash: null, passwordResetExpiresAt: null }).where(eq(users.id, userId));
 }
 
 export async function updateTwoFactorEnrollment(userId: number, data: { twoFactorSecret?: string; twoFactorEnrollmentId?: string | null; twoFactorEnabled?: number; recoveryCodesHash?: string }) {
