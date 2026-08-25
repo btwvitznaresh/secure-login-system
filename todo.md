@@ -23,7 +23,7 @@
 - [x] Add password-reset request, email-token verification, and password update workflow
 - [x] Add automated tests for rate limiting, CSRF, TOTP login, recovery codes, and password reset
 - [x] Update security documentation and run type checks, tests, visual verification, and GitHub push
-- [ ] Add a dedicated recovery-code input state to the 2FA challenge UI
-- [ ] Add a client-side email-verification token flow with success and error states
-- [ ] Add tests for TOTP login verification, recovery-code redemption, password reset, and email verification
-- [ ] Initialize or update the GitHub repository and verify the latest remote state
+- [x] Add a dedicated recovery-code input state to the 2FA challenge UI
+- [x] Add a client-side email-verification token flow with success and error states
+- [x] Add tests for TOTP login verification, recovery-code redemption, password reset, and email verification
+- [x] Initialize or update the GitHub repository and verify the latest remote state
