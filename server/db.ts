@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { authSessions, InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +90,59 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+export function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+export async function getLocalUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(users).where(eq(users.email, normalizeEmail(email))).limit(1);
+  return rows[0];
+}
+
+export async function createLocalUser(email: string, passwordHash: string, name?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(users).values({
+    openId: `local_${crypto.randomUUID()}`,
+    email: normalizeEmail(email),
+    name: name?.trim() || null,
+    passwordHash,
+    loginMethod: "local",
+  });
+  return Number(result[0].insertId);
+}
+
+export function hashSessionToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export async function createAuthSession(userId: number, tokenHash: string, expiresAt: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.insert(authSessions).values({ userId, tokenHash, expiresAt });
+}
+
+export async function getUserBySessionToken(token: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select({ user: users }).from(authSessions)
+    .innerJoin(users, eq(authSessions.userId, users.id))
+    .where(and(eq(authSessions.tokenHash, hashSessionToken(token)), gt(authSessions.expiresAt, new Date())))
+    .limit(1);
+  return rows[0]?.user;
+}
+
+export async function deleteAuthSession(token: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(authSessions).where(eq(authSessions.tokenHash, hashSessionToken(token)));
+}
+
+export async function updateTwoFactorEnrollment(userId: number, data: { twoFactorSecret?: string; twoFactorEnrollmentId?: string | null; twoFactorEnabled?: number; recoveryCodesHash?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(users).set(data).where(eq(users.id, userId));
+}
+

@@ -20,9 +20,25 @@ export const users = mysqlTable("users", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  passwordHash: varchar("passwordHash", { length: 255 }),
+  twoFactorEnabled: int("twoFactorEnabled").default(0).notNull(),
+  twoFactorSecret: varchar("twoFactorSecret", { length: 255 }),
+  twoFactorEnrollmentId: varchar("twoFactorEnrollmentId", { length: 64 }),
+  recoveryCodesHash: text("recoveryCodesHash"),
 });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+export const authSessions = mysqlTable("auth_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  tokenHash: varchar("tokenHash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AuthSession = typeof authSessions.$inferSelect;
+
+// 2FA fields are intentionally ready for a future TOTP provider integration.
+// Secrets and recovery-code material must be encrypted/hashed before production use.
