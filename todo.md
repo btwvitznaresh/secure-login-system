@@ -27,3 +27,13 @@
 - [x] Add a client-side email-verification token flow with success and error states
 - [x] Add tests for TOTP login verification, recovery-code redemption, password reset, and email verification
 - [x] Initialize or update the GitHub repository and verify the latest remote state
+- [x] Create and validate reusable secure-auth skill with skill-creator
+- [x] Add profile dashboard with active-session listing and revocation
+- [ ] Add Google and GitHub OAuth2 sign-in options with safe configuration guidance
+- [x] Add live password-strength meter to registration and reset forms
+- [x] Add automated tests for session revocation and password-strength scoring
+- [x] Update documentation and run checks; checkpoint and GitHub push remain pending
+- [ ] Add non-sensitive security-event data support and dashboard presentation without fabricated account records
+- [x] Preserve current-session metadata when revoking other sessions
+- [x] Add explicit session-query and revoke-mutation error states
+- [x] Ensure client password-strength tests are included in the Vitest run

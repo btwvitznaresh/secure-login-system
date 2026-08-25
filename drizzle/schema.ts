@@ -41,6 +41,8 @@ export const authSessions = mysqlTable("auth_sessions", {
   tokenHash: varchar("tokenHash", { length: 64 }).notNull().unique(),
   expiresAt: timestamp("expiresAt").notNull(),
   twoFactorVerified: int("twoFactorVerified").default(1).notNull(),
+  ipAddress: varchar("ipAddress", { length: 64 }),
+  userAgent: varchar("userAgent", { length: 512 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

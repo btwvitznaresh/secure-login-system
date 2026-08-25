@@ -1,4 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, ne } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
 import { authSessions, InsertUser, users } from "../drizzle/schema";
@@ -118,10 +118,10 @@ export function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export async function createAuthSession(userId: number, tokenHash: string, expiresAt: Date, twoFactorVerified = 1) {
+export async function createAuthSession(userId: number, tokenHash: string, expiresAt: Date, twoFactorVerified = 1, metadata?: { ipAddress?: string; userAgent?: string }) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.insert(authSessions).values({ userId, tokenHash, expiresAt, twoFactorVerified });
+  await db.insert(authSessions).values({ userId, tokenHash, expiresAt, twoFactorVerified, ipAddress: metadata?.ipAddress, userAgent: metadata?.userAgent?.slice(0, 512) });
 }
 
 export async function getUserBySessionToken(token: string) {
@@ -138,6 +138,19 @@ export async function deleteAuthSession(token: string) {
   const db = await getDb();
   if (!db) return;
   await db.delete(authSessions).where(eq(authSessions.tokenHash, hashSessionToken(token)));
+}
+
+export async function getActiveSessions(userId: number) {
+  const db = await getDb(); if (!db) return [];
+  return db.select({ id: authSessions.id, tokenHash: authSessions.tokenHash, expiresAt: authSessions.expiresAt, twoFactorVerified: authSessions.twoFactorVerified, ipAddress: authSessions.ipAddress, userAgent: authSessions.userAgent, createdAt: authSessions.createdAt }).from(authSessions).where(and(eq(authSessions.userId, userId), gt(authSessions.expiresAt, new Date())));
+}
+export async function revokeAuthSession(userId: number, sessionId: number) {
+  const db = await getDb(); if (!db) return;
+  await db.delete(authSessions).where(and(eq(authSessions.userId, userId), eq(authSessions.id, sessionId)));
+}
+export async function revokeOtherAuthSessions(userId: number, currentToken: string) {
+  const db = await getDb(); if (!db) return;
+  await db.delete(authSessions).where(and(eq(authSessions.userId, userId), ne(authSessions.tokenHash, hashSessionToken(currentToken)), gt(authSessions.expiresAt, new Date())));
 }
 
 export async function verifyAuthSessionTwoFactor(token: string) {

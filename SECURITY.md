@@ -39,3 +39,11 @@ State-changing local-auth procedures require a server-issued double-submit CSRF 
 TOTP enrollment uses the `otplib` implementation with a 160-bit secret, an `otpauth://` URI, a six-digit verification step, and a seven-day session challenge state. When enabled, account access remains blocked until the current session completes TOTP verification or redeems one unused recovery code. Recovery codes are individually bcrypt-hashed and the redeemed hash is removed from the stored JSON array.
 
 Registration and password-reset requests use non-enumerating responses. Registration creates a short-lived email-verification token, while reset requests create a short-lived password-reset token. The server sends these tokens through `AUTH_EMAIL_WEBHOOK_URL`, a provider-agnostic HTTPS webhook that your transactional email service should translate into user-facing links. The links should point back to the app with the token as a one-time parameter. In development, delivery is logged as prepared rather than sent.
+
+## Profile security dashboard
+
+The authenticated profile view lists only unexpired sessions and displays minimal client metadata. The current session is marked and cannot be revoked from its own row; other sessions can be revoked individually, or all other sessions can be invalidated while preserving the current session. Session identifiers and token digests are never sent to the browser.
+
+## Password-strength feedback
+
+Registration and password-reset forms provide real-time guidance based on length, mixed case, digits, symbols, and repeated-character patterns. This is advisory UX only; the server remains authoritative and requires the configured password policy.
