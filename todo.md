@@ -32,7 +32,7 @@
 - [ ] Add Google and GitHub OAuth2 sign-in options with safe configuration guidance
 - [x] Add live password-strength meter to registration and reset forms
 - [x] Add automated tests for session revocation and password-strength scoring
-- [x] Update documentation and run checks; checkpoint and GitHub push remain pending
+- [x] Update documentation and run checks; checkpoint and GitHub push completed
 - [ ] Add non-sensitive security-event data support and dashboard presentation without fabricated account records
 - [x] Preserve current-session metadata when revoking other sessions
 - [x] Add explicit session-query and revoke-mutation error states
